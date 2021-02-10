@@ -1,8 +1,12 @@
-﻿; +----------------+
+; +----------------+
 ; | PropertyGadget |
 ; +----------------+
 ; | 2017.02.08 . Creation (PureBasic 5.51)
 ; |     .05.23 . Cleanup
+; | 2021.02.10 . Resize the ScrollArea Inner Width and the property Gadget Width to fit the visible ScrollArea Width
+; |              AddStringNumProperty (String_Numeric) with Event on LostFocus or Return shortcut. Not to move, resize an object digit by digit 
+; |              AddFontProperty
+; |              Add Color GadgetToolTip RGB(Red, Green, Blue)
 
 CompilerIf (Not Defined(__PropertyGadget_Included, #PB_Constant))
 #__PropertyGadget_Included = #True
@@ -46,7 +50,7 @@ Enumeration ; PropertyChild Gadget IDs
   #PropertyChild_Image
 EndEnumeration
 
-
+#Property_Shortcut_Return = 5
 ;-
 ;- Constants (Private)
 
@@ -79,7 +83,9 @@ Enumeration ; PropertyGadgetItem Type Constants
   #__PG_Spacer
   #__PG_Spin
   #__PG_String
+  #__PG_StringNum
   #__PG_Trackbar
+  #__PG_Font
   ;
   #__PG_TypeCount
   #__PG_None = -1
@@ -142,6 +148,7 @@ Global __PG_Initialized.i = #False
 
 ; These apply to all PropertyGadgets in the program!
 Global __PG_Margin.i
+Global __PG_MarginRight.i
 Global __PG_Padding.i
 Global __PG_ToggleSize.i
 Global __PG_LabelOffset.i
@@ -331,6 +338,7 @@ Procedure.i __PG_LoadBoldFont()
   If (SystemParametersInfo_(#SPI_GETNONCLIENTMETRICS, SizeOf(NCM), @NCM, #Null))
     ProcedureReturn (LoadFont(#PB_Any, PeekS(@NCM\lfMenuFont\lfFaceName[0]), NCM\lfMenuFont\lfHeight, #PB_Font_Bold | #PB_Font_HighQuality))
   EndIf
+;   ProcedureReturn (LoadFont(#PB_Any, "Arial", 10, #PB_Font_Bold | #PB_Font_HighQuality))
 EndProcedure
 
 Procedure.i __PG_StringGadgetCallback(hWnd.i, uMsg.i, wParam.i, lParam.i)
@@ -377,10 +385,18 @@ EndProcedure
 CompilerEndIf
 
 Procedure __ResizePropertyGadget(*PG.__PropertyGadget)
+  Protected r.RECT, ScrollAreaVisWidth.i
   If (*PG)
+    GetClientRect_(GadgetID(*PG\Scroll), @r)
+    ScrollAreaVisWidth = r\right - r\left
     *PG\InnerWidth  = GetGadgetAttribute(*PG\Scroll, #PB_ScrollArea_InnerWidth)
     *PG\InnerHeight = GetGadgetAttribute(*PG\Scroll, #PB_ScrollArea_InnerHeight)
-    SetGadgetAttribute(*PG\Scroll, #PB_ScrollArea_InnerWidth,  *PG\VisWidth)
+    ;Resize the ScrollArea Inner Width to fit the visible ScrollArea width
+    If ScrollAreaVisWidth  > *PG\VisWidth
+      SetGadgetAttribute(*PG\Scroll, #PB_ScrollArea_InnerWidth, ScrollAreaVisWidth)
+    Else
+      SetGadgetAttribute(*PG\Scroll, #PB_ScrollArea_InnerWidth,  *PG\VisWidth)
+    EndIf
     SetGadgetAttribute(*PG\Scroll, #PB_ScrollArea_InnerHeight, *PG\VisHeight)
     Protected x.i = __PG_Margin
     Protected y.i = __PG_Margin
@@ -390,7 +406,12 @@ Procedure __ResizePropertyGadget(*PG.__PropertyGadget)
     If (*PG\HasHeaders)
       ToggleOffset = __PG_ToggleSize
     EndIf
-    Protected FlexWidth.i = *PG\VisWidth - (x + ToggleOffset + *PG\LabelWidth)
+    ;Resize the property gadget to fit the visible ScrollArea width
+    If ScrollAreaVisWidth - __PG_MarginRight > *PG\VisWidth
+      Protected FlexWidth.i = ScrollAreaVisWidth - (x + ToggleOffset + *PG\LabelWidth) - __PG_MarginRight
+    Else
+      FlexWidth.i = *PG\VisWidth - (x + ToggleOffset + *PG\LabelWidth) - __PG_MarginRight
+    EndIf
     Protected Collapsed.i = #False
     ForEach (*PG\PGI())
       With *PG\PGI()
@@ -425,7 +446,7 @@ Procedure __ResizePropertyGadget(*PG.__PropertyGadget)
               ResizeGadget(\Gadget[#PropertyChild_Main], x + ToggleOffset, y + __PG_LabelOffset, __PG_ReqWidth(\Gadget[0]), __PG_ToggleSize)
             Case #__PG_Spacer
               y + \IValue
-            Case #__PG_String, #__PG_Password, #__PG_ComboBox, #__PG_Shortcut, #__PG_Spin
+            Case #__PG_String, #__PG_StringNum, #__PG_Password, #__PG_ComboBox, #__PG_Shortcut, #__PG_Spin
               If (\Gadget[3])
                 ResizeGadget(\Gadget[3], x + ToggleOffset, y + __PG_LabelOffset, #PB_Ignore, #PB_Ignore)
               EndIf
@@ -438,7 +459,7 @@ Procedure __ResizePropertyGadget(*PG.__PropertyGadget)
               ResizeGadget(\Gadget[0], x + ToggleOffset, y, __PG_ReqWidth(\Gadget[0]), __PG_ItemHeight(\Type))
             Case #__PG_Button, #__PG_Label
               ResizeGadget(\Gadget[0], x + ToggleOffset + *PG\LabelWidth, y, FlexWidth, __PG_ItemHeight(\Type))
-            Case #__PG_Color
+            Case #__PG_Color, #__PG_Font
               ResizeGadget(\Gadget[1], x + ToggleOffset, y + __PG_LabelOffset, __PG_ReqWidth(\Gadget[1]), __PG_ReqHeight(\Gadget[1]))
               ResizeGadget(\Gadget[2], x + ToggleOffset + *PG\LabelWidth, y + 1, __PG_ItemHeight(\Type) - 2, __PG_ItemHeight(\Type) - 2)
               ResizeGadget(\Gadget[0], x + ToggleOffset + *PG\LabelWidth + __PG_ItemHeight(\Type) - 1, y, FlexWidth - __PG_ItemHeight(\Type) + 1, __PG_ItemHeight(\Type))
@@ -516,7 +537,7 @@ Procedure __RecalcPropertyGadget(*PG.__PropertyGadget, Resize.i = #False)
             If (Not Collapsed)
               HTotal + \IValue
             EndIf
-          Case #__PG_String, #__PG_Password, #__PG_Shortcut, #__PG_Color, #__PG_Trackbar, #__PG_Percent, #__PG_Spin, #__PG_Progress, #__PG_Browse, #__PG_Checkbox
+          Case #__PG_String, #__PG_StringNum, #__PG_Password, #__PG_Shortcut, #__PG_Color, #__PG_Trackbar, #__PG_Percent, #__PG_Spin, #__PG_Progress, #__PG_Browse, #__PG_Checkbox, #__PG_Font
             ThisWLeft = __PG_ReqWidth(\Gadget[1]) + __PG_Margin
           Case #__PG_CheckboxLabel
             ThisWTotal = __PG_ReqWidth(\Gadget[0])
@@ -611,6 +632,9 @@ Procedure __UpdateProperty(*PGI.__PropertyGadgetItem, LeaveText.i = #False)
           StopDrawing()
         EndIf
         Protected Color.i = *PGI\IValue
+        ;Add GadgetToolTip
+        GadgetToolTip(*PGI\Gadget[2], "RGB(" + Str(Red(Color)) + ", " + Str(Green(Color)) + ", " + Str(Blue(Color)) + ")")
+        GadgetToolTip(*PGI\Gadget[0], "RGB(" + Str(Red(Color)) + ", " + Str(Green(Color)) + ", " + Str(Blue(Color)) + ")")
         If (Not LeaveText)
           If (*PGI\ExData & #ColorProperty_PBFormat)
             SetGadgetText(*PGI\Gadget[0], "$" + RSet(Hex(Color), 6, "0"))
@@ -629,6 +653,7 @@ EndProcedure
 
 Procedure __PropertyGadgetCallbackProcess(Gadget.i, EventType.i)
   Protected *PG.__PropertyGadget = GetGadgetData(Gadget)
+  Static EventTypeChange.b
   If (*PG)
     Protected *PGI.__PropertyGadgetItem = __FindPropertyGadgetItem(*PG, Gadget)
     CompilerIf (#__PG_Windows)
@@ -715,6 +740,23 @@ Procedure __PropertyGadgetCallbackProcess(Gadget.i, EventType.i)
                 __PG_Post(*PG, EventIndex)
             EndSelect
             
+          Case #__PG_StringNum
+            ;No PostEvent on #PB_EventType_Change, only on LostFocus or on Return Shortcut. Not to move, resize an object digit by digit
+            Select (EventType)
+              Case #PB_EventType_Focus
+                AddKeyboardShortcut(*PG\Window, #PB_Shortcut_Return, #Property_Shortcut_Return)
+                __PG_Select(Gadget)
+                EventTypeChange = #False
+              Case #PB_EventType_LostFocus
+                RemoveKeyboardShortcut(*PG\Window, #PB_Shortcut_Return)
+                If EventTypeChange
+                  __PG_Post(*PG, EventIndex, #PB_EventType_LostFocus)
+                EndIf
+                EventTypeChange = #False
+              Case #PB_EventType_Change
+                EventTypeChange = #True
+            EndSelect
+            
           Case #__PG_Button, #__PG_Checkbox, #__PG_CheckboxLabel, #__PG_Shortcut
             __PG_Post(*PG, EventIndex)
             
@@ -787,6 +829,45 @@ Procedure __PropertyGadgetCallbackProcess(Gadget.i, EventType.i)
                   __PG_Select(*PGI\Gadget[0])
                   __PG_Post(*PG, EventIndex)
                 EndIf
+              EndIf
+            EndIf
+            
+          Case #__PG_Font
+            Protected Font.i, FontText.s, FontName.s, FontSize.i, FontStyle.i
+            If (Gadget = *PGI\Gadget[2])
+              If ((EventType = #PB_EventType_LeftClick) Or (EventType = #PB_EventType_RightClick))
+                FontText = GetGadgetText(*PGI\Gadget[0])
+                If CountString(FontText, #LF$) >= 1
+                  FontName = Trim(StringField(FontText, 1, #LF$))
+                  FontSize = Val(Trim(StringField(FontText, 2, #LF$)))
+                  If CountString(FontText, #LF$) = 2
+                    FontText = Trim(StringField(FontText, 3, #LF$))
+                    If CountString(FontText, "B") : FontStyle = FontStyle | #PB_Font_Bold        : EndIf
+                    If CountString(FontText, "I") : FontStyle = FontStyle | #PB_Font_Italic      : EndIf 
+                    If CountString(FontText, "S") : FontStyle = FontStyle | #PB_Font_StrikeOut   : EndIf 
+                    If CountString(FontText, "U") : FontStyle = FontStyle | #PB_Font_Underline   : EndIf 
+                    If CountString(FontText, "H") : FontStyle = FontStyle | #PB_Font_HighQuality : EndIf 
+                  EndIf
+                Else
+                  FontName = Trim(FontText)
+                EndIf
+                Font = FontRequester(FontName, FontSize, 0, 0, FontStyle)
+                If Font > 0
+                  FontText = SelectedFontName() + " " + #LF$ + SelectedFontSize()
+                  FontStyle = SelectedFontStyle()
+                  If FontStyle
+                    FontText + " " + #LF$ 
+                    If FontStyle & #PB_Font_Bold        : FontText + "B" : EndIf
+                    If FontStyle & #PB_Font_Italic      : FontText + "I" : EndIf
+                    If FontStyle & #PB_Font_StrikeOut   : FontText + "S" : EndIf
+                    If FontStyle & #PB_Font_Underline   : FontText + "U" : EndIf
+                    If FontStyle & #PB_Font_HighQuality : FontText + "H" : EndIf
+                  EndIf
+                Else
+                  FontText = ""
+                EndIf
+                SetGadgetText(*PGI\Gadget[0], FontText) 
+                __PG_Post(*PG, EventIndex)
               EndIf
             EndIf
           
@@ -963,13 +1044,18 @@ Procedure.i __AddPropertyGadgetItem(*PG.__PropertyGadget, Type.i, Name.s, ID.s, 
               BindGadgetEvent(\Gadget[#PropertyChild_Main], @__PropertyGadgetCallback())
             EndIf
               
-          Case #__PG_String, #__PG_Password
+          Case #__PG_String, #__PG_StringNum, #__PG_Password
             If (Type = #__PG_Password)
               Flags = #PB_String_Password
+            ElseIf (Type = #__PG_StringNum)
+              Flags = #PB_String_Numeric
             Else
               Flags = #Null
             EndIf
             \Gadget[#PropertyChild_Main] = StringGadget(#PB_Any, 0, 0, 25, 25, SValue, Flags)
+            If Type = #__PG_StringNum
+              SetGadgetAttribute(\Gadget[#PropertyChild_Main], #PB_String_MaximumLength, 4)   ;Optional
+            EndIf
             If (\Gadget[#PropertyChild_Main])
               \Gadget[#PropertyChild_Label] = TextGadget(#PB_Any, 0, 0, 25, 25, Name)
               \Type = Type
@@ -983,6 +1069,35 @@ Procedure.i __AddPropertyGadgetItem(*PG.__PropertyGadget, Type.i, Name.s, ID.s, 
               \Gadget[#PropertyChild_Label] = TextGadget(#PB_Any, 0, 0, 25, 25, Name)
               \Type = Type
               BindGadgetEvent(\Gadget[#PropertyChild_Main], @__PropertyGadgetCallback())
+            EndIf
+            
+          Case #__PG_Font
+            \Gadget[#PropertyChild_Main] = StringGadget(#PB_Any, 0, 0, 25, 25, "", #PB_String_ReadOnly)
+            If (\Gadget[#PropertyChild_Main])
+              \Gadget[#PropertyChild_Label] = TextGadget(#PB_Any, 0, 0, 25, 25, Name)
+              \Gadget[#PropertyChild_Function] = ButtonGadget(#PB_Any, 0, 0, 25, 25, "...")
+              \Type  = Type
+              ; Possible Check that the font setting is installed!
+              If CountString(SValue, "|") >= 1
+                Protected FontName.s = Trim(StringField(SValue, 1, "|"))
+                Protected FontSize.i = Val(Trim(StringField(SValue, 2, "|")))
+                Protected FontText.s = FontName + " " + #LF$ + FontSize
+                Protected FontStyle.i
+                If CountString(SValue, "|") = 2
+                  SValue = Trim(StringField(SValue, 3, "|"))
+                  FontText + " " + #LF$ 
+                  If CountString(SValue, "B") : FontStyle = FontStyle | #PB_Font_Bold        : FontText + "B" : EndIf
+                  If CountString(SValue, "I") : FontStyle = FontStyle | #PB_Font_Italic      : FontText + "I" : EndIf 
+                  If CountString(SValue, "S") : FontStyle = FontStyle | #PB_Font_StrikeOut   : FontText + "S" : EndIf 
+                  If CountString(SValue, "U") : FontStyle = FontStyle | #PB_Font_Underline   : FontText + "U" : EndIf 
+                  If CountString(SValue, "H") : FontStyle = FontStyle | #PB_Font_HighQuality : FontText + "H" : EndIf
+                EndIf
+              Else
+                FontText = Trim(SValue)
+              EndIf
+              SetGadgetText(\Gadget[#PropertyChild_Main], FontText)
+              BindGadgetEvent(\Gadget[#PropertyChild_Function], @__PropertyGadgetCallback())
+              __PG_RepCallback(\Gadget[#PropertyChild_Main], @__PG_StringGadgetCallback())
             EndIf
             
           Default
@@ -1021,7 +1136,8 @@ Procedure __InitPropertyGadgets()
   
   ; Default metrics
   
-  __PG_Margin  = 5
+  __PG_Margin  = 0 ; Kenmo Default 5
+  __PG_MarginRight = 4
   __PG_Padding = 0
   
   ; Determine standard heights of temporary gadgets
@@ -1072,16 +1188,18 @@ Procedure __InitPropertyGadgets()
   __PG_LabelOffset = (__PG_ItemHeight(#__PG_String) - __PG_ItemHeight(#__PG_Label) + 1)/2
   __PG_ToggleSize  = (__PG_ItemHeight(#__PG_Label))
   
-  __PG_ItemHeight(#__PG_Header)    = __PG_ItemHeight(#__PG_String)
-  __PG_ItemHeight(#__PG_Browse)    = __PG_ItemHeight(#__PG_String)
-  __PG_ItemHeight(#__PG_Color)     = __PG_ItemHeight(#__PG_String)
-  __PG_ItemHeight(#__PG_Checkbox)  = __PG_ItemHeight(#__PG_CheckboxLabel)
-  __PG_ItemHeight(#__PG_Password)  = __PG_ItemHeight(#__PG_String)
-  __PG_ItemHeight(#__PG_Progress)  = __PG_ItemHeight(#__PG_String)
-  __PG_ItemHeight(#__PG_Shortcut)  = __PG_ItemHeight(#__PG_String)
-  __PG_ItemHeight(#__PG_Spacer)    = 0 ; Actual spacing height determined by IValue
-  __PG_ItemHeight(#__PG_Trackbar)  = __PG_ItemHeight(#__PG_Button) + 2
-  __PG_ItemHeight(#__PG_Percent)   = __PG_ItemHeight(#__PG_Trackbar)
+  __PG_ItemHeight(#__PG_Header)     = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Browse)     = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Color)      = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Checkbox)   = __PG_ItemHeight(#__PG_CheckboxLabel)
+  __PG_ItemHeight(#__PG_Password)   = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Progress)   = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Shortcut)   = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Spacer)     = 0 ; Actual spacing height determined by IValue
+  __PG_ItemHeight(#__PG_StringNum)  = __PG_ItemHeight(#__PG_String)
+  __PG_ItemHeight(#__PG_Trackbar)   = __PG_ItemHeight(#__PG_Button) + 2
+  __PG_ItemHeight(#__PG_Percent)    = __PG_ItemHeight(#__PG_Trackbar)
+  __PG_ItemHeight(#__PG_Font)       = __PG_ItemHeight(#__PG_String)
   
   
   ; Determine standard colors
@@ -1261,6 +1379,7 @@ EndProcedure
 Procedure ResizePropertyGadget(Gadget.i, x.i, y.i, Width.i = #PB_Ignore, Height.i = #PB_Ignore)
   Protected *PG.__PropertyGadget = GetGadgetData(Gadget)
   If (*PG)
+    ResizeGadget(*PG\Scroll, x, y, Width, Height)
     LockPropertyGadget(Gadget, #True)
     ResizeGadget(Gadget, x, y, Width, Height)
     __ResizePropertyGadget(*PG)
@@ -1387,7 +1506,7 @@ Procedure.i GetPropertyState(Gadget.i, Index.i, ID.s = "")
       Select (*PG\PGI()\Type)
         Case #__PG_Header, #__PG_Color
           Result = *PG\PGI()\IValue
-        Case #__PG_Browse, #__PG_Label, #__PG_Password, #__PG_String
+        Case #__PG_Browse, #__PG_Label, #__PG_Password, #__PG_String, #__PG_StringNum, #__PG_Font
           Result = Val(GetGadgetText(*PG\PGI()\Gadget[0]))
         Case #__PG_Button, #__PG_ComboBox, #__PG_Percent, #__PG_Progress, #__PG_Shortcut, #__PG_Spin, #__PG_Trackbar
           Result = GetGadgetState(*PG\PGI()\Gadget[0])
@@ -1422,7 +1541,7 @@ Procedure SetPropertyState(Gadget.i, Index.i, State.i, ID.s = "")
           If (Bool(State) <> *PG\PGI()\IValue)
             __PropertyGadgetCallbackProcess(*PG\PGI()\Gadget[1], #PB_EventType_LeftClick)
           EndIf
-        Case #__PG_Browse, #__PG_Password, #__PG_String
+        Case #__PG_Browse, #__PG_Password, #__PG_String, #__PG_StringNum, #__PG_Font
           SetGadgetText(*PG\PGI()\Gadget[0], Str(State))
         Case #__PG_Button, #__PG_ComboBox, #__PG_Percent, #__PG_Progress, #__PG_Shortcut, #__PG_Spin, #__PG_Trackbar
           SetGadgetState(*PG\PGI()\Gadget[0], State)
@@ -1454,8 +1573,11 @@ Procedure.s GetPropertyText(Gadget.i, Index.i, ID.s = "")
       Select (*PG\PGI()\Type)
         Case #__PG_Header, #__PG_Button
           Result = *PG\PGI()\SValue
-        Case #__PG_Browse, #__PG_Color, #__PG_ComboBox, #__PG_Label, #__PG_Password, #__PG_String
+        Case #__PG_Browse, #__PG_Color, #__PG_ComboBox, #__PG_Label, #__PG_Password, #__PG_String, #__PG_StringNum
           Result = GetGadgetText(*PG\PGI()\Gadget[0])
+        Case #__PG_Font
+          Result = GetGadgetText(*PG\PGI()\Gadget[0])
+          Result = ReplaceString(Result, #LF$, "| ")
         Case #__PG_Checkbox, #__PG_CheckboxLabel, #__PG_Progress, #__PG_Spin, #__PG_Trackbar
           Result = Str(GetGadgetState(*PG\PGI()\Gadget[0]))
         Case #__PG_Percent
@@ -1493,8 +1615,28 @@ Procedure SetPropertyText(Gadget.i, Index.i, Text.s, ID.s = "")
         Case #__PG_Color
           SetGadgetText(*PG\PGI()\Gadget[0], Text)
           __PropertyGadgetCallbackProcess(*PG\PGI()\Gadget[0], #PB_EventType_Change)
-        Case #__PG_ComboBox, #__PG_Password, #__PG_String
+        Case #__PG_ComboBox, #__PG_Password, #__PG_String, #__PG_StringNum
           SetGadgetText(*PG\PGI()\Gadget[0], Text)
+        Case #__PG_Font
+          ; ; Possible Check that the font setting is installed!
+          If CountString(Text, "|") >= 1
+            Protected FontName.s = Trim(StringField(Text, 1, "|"))
+            Protected FontSize.i = Val(Trim(StringField(Text, 2, "|")))
+            Protected FontText.s = FontName + " " + #LF$ + FontSize
+            Protected FontStyle.i
+            If CountString(Text, "|") = 2
+              Text = Trim(StringField(Text, 3, "|"))
+              FontText + " " + #LF$ 
+              If CountString(Text, "B") : FontStyle = FontStyle | #PB_Font_Bold        : FontText + "B" : EndIf
+              If CountString(Text, "I") : FontStyle = FontStyle | #PB_Font_Italic      : FontText + "I" : EndIf 
+              If CountString(Text, "S") : FontStyle = FontStyle | #PB_Font_StrikeOut   : FontText + "S" : EndIf 
+              If CountString(Text, "U") : FontStyle = FontStyle | #PB_Font_Underline   : FontText + "U" : EndIf 
+              If CountString(Text, "H") : FontStyle = FontStyle | #PB_Font_HighQuality : FontText + "H" : EndIf
+            EndIf
+          Else
+            FontText = Trim(Text)
+          EndIf
+          SetGadgetText(*PG\PGI()\Gadget[0], FontText)
         Case #__PG_Percent, #__PG_Progress, #__PG_Spin, #__PG_Trackbar
           SetGadgetState(*PG\PGI()\Gadget[0], Val(Trim(Text, "%")))
         Case #__PG_Shortcut, #__PG_Spacer
@@ -1592,6 +1734,10 @@ Procedure.i AddComboBoxProperty(Gadget.i, Name.s, ItemList.s, Editable.i = #Fals
   ProcedureReturn (__AddPropertyGadgetItem(GetGadgetData(Gadget), #__PG_ComboBox, Name, ID, Editable, ItemList))
 EndProcedure
 
+Procedure.i AddFontProperty(Gadget.i, Name.s, Font.s, ID.s = "")
+  ProcedureReturn (__AddPropertyGadgetItem(GetGadgetData(Gadget), #__PG_Font, Name, ID, 0, Font))
+EndProcedure
+
 Procedure.i AddLabelProperty(Gadget.i, Text.s, ID.s = "")
   ProcedureReturn (__AddPropertyGadgetItem(GetGadgetData(Gadget), #__PG_Label, ID, ID, #Null, Text))
 EndProcedure
@@ -1618,6 +1764,10 @@ EndProcedure
 
 Procedure.i AddStringProperty(Gadget.i, Name.s, Value.s = "", ID.s = "")
   ProcedureReturn (__AddPropertyGadgetItem(GetGadgetData(Gadget), #__PG_String, Name, ID, 0, Value))
+EndProcedure
+
+Procedure.i AddStringNumProperty(Gadget.i, Name.s, Value.s = "", ID.s = "")
+  ProcedureReturn (__AddPropertyGadgetItem(GetGadgetData(Gadget), #__PG_StringNum, Name, ID, 0, Value))
 EndProcedure
 
 Procedure.i AddTrackbarProperty(Gadget.i, Name.s, Max.i, ID.s = "")
@@ -1647,7 +1797,7 @@ DisableExplicit
 #Enter      = 0
 #Escape     = 1
 #CloseChild = 2
-
+#F5         = 3
 
 
 Procedure DemoResizeCB() ; Resize window callback
@@ -1693,74 +1843,88 @@ Procedure.i DemoHelpCB(PropertyGadget.i, ChildGadget.i, Index.i, ID.s) ; Help "b
 EndProcedure
 
 
+; If LoadFont(1, "Arial", 10, #PB_Font_HighQuality)   ; If Font change, see also __PG_LoadBoldFont() which uses the Default Font (Windows 10 = Segoe UI 12)
+;   SetGadgetFont(#PB_Default, FontID(1)) 
+; EndIf
 
-
-
+    
 ; Create window and PropertyGadget
 
-OpenWindow(#DemoWin, 0, 0, 240, 360, "PropertyGadget",
-    #PB_Window_ScreenCentered | #PB_Window_MinimizeGadget | #PB_Window_SizeGadget | #PB_Window_Invisible)
-  AddKeyboardShortcut(#DemoWin, #PB_Shortcut_Return, #Enter)
+OpenWindow(#DemoWin, 0, 0, 300, 360, "PropertyGadget",
+           #PB_Window_ScreenCentered | #PB_Window_MinimizeGadget | #PB_Window_SizeGadget | #PB_Window_Invisible)
+  AddKeyboardShortcut(#DemoWin, #PB_Shortcut_F5, #F5)
   AddKeyboardShortcut(#DemoWin, #PB_Shortcut_Escape, #Escape)
   
 PropertyGadget(#DemoPG, 0, 0, WindowWidth(#DemoWin), WindowHeight(#DemoWin), #PropertyGadget_Border)
   LockPropertyGadget(#DemoPG, #True) ; Prevent redraws while building gadget
   
   AddPropertyHeader(#DemoPG, "Window")
-    AddComboBoxProperty(#DemoPG, "Number:",         "#PB_Any", #True,                  "win.number")
-    AddStringProperty(#DemoPG,   "Title:",          "Hello World!",                    "win.title")
-    AddStringProperty(#DemoPG,   "Parent:",         "",                                "win.parent")
-    AddColorProperty(#DemoPG,    "Color:",          $FFFFDD, #ColorProperty_CSSFormat, "win.color")
-    AddShortcutProperty(#DemoPG, "Close Shortcut:", #PB_Shortcut_Back,                 "win.shortcut")
-    AddButtonProperty(#DemoPG,   "Create Window",                                      "win.create")
+    AddComboBoxProperty(#DemoPG, "Number:",             "#PB_Any", #True,                        "win.number")
+    AddStringProperty(#DemoPG,   "Title:",              "hello world",                           "win.title")
+    AddStringProperty(#DemoPG,   "Parent:",             "",                                      "win.parent")
+    AddColorProperty(#DemoPG,    "Color:",              $FFFFDD, #ColorProperty_CSSFormat,       "win.color")
+    AddShortcutProperty(#DemoPG, "Close Shortcut:",     #PB_Shortcut_Back,                       "win.shortcut")
+    AddButtonProperty(#DemoPG,   "Create Window (F5)",                                           "win.create")
     
   AddPropertyHeader(#DemoPG, "Dimensions")
-    AddStringProperty(#DemoPG, "x:",      "50",  "win.x")
-    AddStringProperty(#DemoPG, "y:",      "50",  "win.y")
-    AddStringProperty(#DemoPG, "Width:",  "320", "win.width")
-    AddStringProperty(#DemoPG, "Height:", "240", "win.height")
+    AddStringNumProperty(#DemoPG, "x:",      "50",                                               "win.x")
+    AddStringNumProperty(#DemoPG, "y:",      "50",                                               "win.y")
+    AddStringNumProperty(#DemoPG, "Width:",  "320",                                              "win.width")
+    AddStringNumProperty(#DemoPG, "Height:", "240",                                              "win.height")
     
   AddPropertyHeader(#DemoPG, "Flags", #True)
-    AddCheckboxLabelProperty(#DemoPG, "SystemMenu",     #True,  #PB_Window_SystemMenu,     "win.sysMenu")
-    AddCheckboxLabelProperty(#DemoPG, "MinimizeGadget", #True,  #PB_Window_MinimizeGadget, "win.minGadget")
-    AddCheckboxLabelProperty(#DemoPG, "MaximizeGadget", #False, #PB_Window_MaximizeGadget, "win.maxGadget")
-    AddCheckboxLabelProperty(#DemoPG, "SizeGadget",     #True,  #PB_Window_SizeGadget,     "win.sizeGadget")
+    AddCheckboxLabelProperty(#DemoPG, "SystemMenu",     #True,  #PB_Window_SystemMenu,           "win.sysMenu")
+    AddCheckboxLabelProperty(#DemoPG, "MinimizeGadget", #True,  #PB_Window_MinimizeGadget,       "win.minGadget")
+    AddCheckboxLabelProperty(#DemoPG, "MaximizeGadget", #False, #PB_Window_MaximizeGadget,       "win.maxGadget")
+    AddCheckboxLabelProperty(#DemoPG, "SizeGadget",     #True,  #PB_Window_SizeGadget,           "win.sizeGadget")
     AddPropertySpacer(#DemoPG)
-    AddCheckboxLabelProperty(#DemoPG, "Invisible",      #False, #PB_Window_Invisible,      "win.invisible")
-    AddCheckboxLabelProperty(#DemoPG, "TitleBar",       #False, #PB_Window_TitleBar,       "win.titleBar")
-    AddCheckboxLabelProperty(#DemoPG, "Tool",           #False, #PB_Window_Tool,           "win.tool")
-    AddCheckboxLabelProperty(#DemoPG, "Borderless",     #False, #PB_Window_BorderLess,     "win.borderless")
-    AddCheckboxLabelProperty(#DemoPG, "ScreenCentered", #False, #PB_Window_ScreenCentered, "win.screenCenter")
-    AddCheckboxLabelProperty(#DemoPG, "WindowCentered", #False, #PB_Window_WindowCentered, "win.windowCenter")
+    AddCheckboxLabelProperty(#DemoPG, "Invisible",      #False, #PB_Window_Invisible,            "win.invisible")
+    AddCheckboxLabelProperty(#DemoPG, "TitleBar",       #False, #PB_Window_TitleBar,             "win.titleBar")
+    AddCheckboxLabelProperty(#DemoPG, "Tool",           #False, #PB_Window_Tool,                 "win.tool")
+    AddCheckboxLabelProperty(#DemoPG, "Borderless",     #False, #PB_Window_BorderLess,           "win.borderless")
+    AddCheckboxLabelProperty(#DemoPG, "ScreenCentered", #False, #PB_Window_ScreenCentered,       "win.screenCenter")
+    AddCheckboxLabelProperty(#DemoPG, "WindowCentered", #False, #PB_Window_WindowCentered,       "win.windowCenter")
     AddPropertySpacer(#DemoPG)
-    AddCheckboxLabelProperty(#DemoPG, "Maximize",       #False, #PB_Window_Maximize,       "win.maximize")
-    AddCheckboxLabelProperty(#DemoPG, "Minimize",       #False, #PB_Window_Minimize,       "win.minimize")
-    AddCheckboxLabelProperty(#DemoPG, "NoGadgets",      #False, #PB_Window_NoGadgets,      "win.noGadgets")
-    AddCheckboxLabelProperty(#DemoPG, "NoActivate",     #False, #PB_Window_NoActivate,     "win.noActivate")
+    AddCheckboxLabelProperty(#DemoPG, "Maximize",       #False, #PB_Window_Maximize,             "win.maximize")
+    AddCheckboxLabelProperty(#DemoPG, "Minimize",       #False, #PB_Window_Minimize,             "win.minimize")
+    AddCheckboxLabelProperty(#DemoPG, "NoGadgets",      #False, #PB_Window_NoGadgets,            "win.noGadgets")
+    AddCheckboxLabelProperty(#DemoPG, "NoActivate",     #False, #PB_Window_NoActivate,           "win.noActivate")
     
   AddPropertyHeader(#DemoPG, "Miscellaneous")
-    AddCheckboxProperty(#DemoPG, "Checkbox:", #False, #True,                            "misc.checkbox")
-    AddPasswordProperty(#DemoPG, "Password:", "Hello World!",                           "misc.password")
-    AddComboBoxProperty(#DemoPG, "ComboBox:", "Option A | Option B | Option C", #False, "misc.combobox")
-    AddTrackbarProperty(#DemoPG, "Trackbar:", 3,                                        "misc.trackbar")
-    AddPercentProperty(#DemoPG,  "Percent:",                                            "misc.percent")
-    AddSpinProperty(#DemoPG,     "Spin:",     9,                                        "misc.spin")
-    AddBrowseProperty(#DemoPG,   "File:",     "", @DemoBrowseCB(),                      "misc.browseFile")
-    AddBrowseProperty(#DemoPG,   "Help:",     "", @DemoHelpCB(),                        "misc.browseHelp")
-      SetGadgetText(GetPropertyChild(#DemoPG, 0, "misc.browseHelp", 2), "?")
-    AddProgressProperty(#DemoPG, "Progress:", 100,                                      "misc.progress")
+    AddCheckboxProperty(#DemoPG, "Checkbox:", #False,                           #True,           "misc.checkbox")
+    AddPasswordProperty(#DemoPG, "Password:", "Hello World!",                                    "misc.password")
+    AddComboBoxProperty(#DemoPG, "ComboBox:", "Option A | Option B | Option C", #False,          "misc.combobox")
+    AddTrackbarProperty(#DemoPG, "Trackbar:", 3,                                                 "misc.trackbar")
+    AddPercentProperty(#DemoPG,  "Percent:",                                                     "misc.percent")
+    AddFontProperty(#DemoPG, "Font:", "Courier New | 12 | BI",                                   "misc.font")
+    AddSpinProperty(#DemoPG,     "Spin:",     9,                                                 "misc.spin")
+    AddBrowseProperty(#DemoPG,   "File:",     "",                               @DemoBrowseCB(), "misc.browseFile")
+    AddBrowseProperty(#DemoPG,   "Help:",     "",                               @DemoHelpCB(),   "misc.browseHelp")
+    SetGadgetText(GetPropertyChild(#DemoPG, 0, "misc.browseHelp", 2), "?")
+    AddProgressProperty(#DemoPG, "Progress:", 100,                                               "misc.progress")
       SetPropertyStateByID(#DemoPG, "misc.progress", 75)
-    AddLabelProperty(#DemoPG,    "This is just a label!",                               "misc.label")
+    AddLabelProperty(#DemoPG,    "This is just a label!",                                        "misc.label")
     AddPropertySpacer(#DemoPG)
-    AddButtonProperty(#DemoPG,   "Quit This Demo",                                      "misc.quit")
+    AddButtonProperty(#DemoPG,   "Quit This Demo",                                               "misc.quit")
     
   LockPropertyGadget(#DemoPG, #False)
 BindEvent(#PB_Event_SizeWindow, @DemoResizeCB(), #DemoWin)
 HideWindow(#DemoWin, #False)
 
 
+; Test Set(Get)PropertyTextByID, Set(Get)PropertyStateByID, PropertyIndexFromID, MatchProperty
+Debug "GetPropertyTextByID: win.Title = " + GetPropertyTextByID(#DemoPG, "win.title")
+SetPropertyTextByID(#DemoPG, "win.title", "Hello World!")
+Debug "SetPropertyTextByID: win.Title = " + GetPropertyTextByID(#DemoPG, "win.title")
 
+Debug "GetPropertyStateByID: misc.Checkbox = " + GetPropertyStateByID(#DemoPG, "misc.checkbox")
+SetPropertyStateByID(#DemoPG, "misc.checkbox", #True)
+Debug "SetPropertyStateByID: misc.Checkbox = " + GetPropertyStateByID(#DemoPG, "misc.checkbox")
 
+Debug "PropertyIndexFromID: misc.password = " + PropertyIndexFromID(#DemoPG, "misc.password")
+Debug "MatchProperty Index = " + PropertyIndexFromID(#DemoPG, "misc.password") + " With ID: misc.password = " + MatchProperty(#DemoPG, PropertyIndexFromID(#DemoPG, "misc.password"), "misc.password")
+
+Debug ""
 
 
 Repeat
@@ -1774,24 +1938,33 @@ Repeat
     EndIf
     
   ElseIf (Event = #PB_Event_Menu)
-    If (EventMenu() = #Enter)
-      DemoCreate()
-    ElseIf (EventMenu() = #Escape)
-      Break
-    ElseIf (EventMenu() = #CloseChild)
-      CloseWindow(EventWindow())
-    EndIf
+    Select EventMenu()
+      Case #F5
+        DemoCreate()
+      Case #Escape
+        Break
+      Case #CloseChild
+        CloseWindow(EventWindow())
+      Case #Property_Shortcut_Return
+        Define ActiveGadget.i = GetActiveGadget()
+        SetActiveGadget(#DemoPG)
+        SetActiveGadget(ActiveGadget)
+    EndSelect
     
   ElseIf (Event = #PB_Event_Gadget)
-    If ((EventGadget() = #DemoPG) And (EventType() = #PB_EventType_Change))
-      If (MatchProperty(#DemoPG, EventProperty(), "win.create"))
-        DemoCreate()
-      ElseIf (MatchProperty(#DemoPG, EventProperty(), "misc.quit"))
-        Break
-      Else
-        Debug "Event: " + PropertyIDFromIndex(#DemoPG, EventData(), #True) +
-            " = " + GetPropertyText(#DemoPG, EventData())
-      EndIf
+    If ((EventGadget() = #DemoPG))
+      Select EventType()
+        Case #PB_EventType_Change, #PB_EventType_LostFocus
+          If (MatchProperty(#DemoPG, EventProperty(), "win.create"))
+            DemoCreate()
+          ElseIf (MatchProperty(#DemoPG, EventProperty(), "misc.quit"))
+            Break
+          Else
+            Debug "Event: " + PropertyIDFromIndex(#DemoPG, EventData(), #True) +
+                  " = " + GetPropertyText(#DemoPG, EventData())
+          EndIf
+          
+      EndSelect
     EndIf
     
   EndIf
